@@ -1440,7 +1440,7 @@ def set_deployment_user(cmd, user_name, password=None):
     user = User(publishing_user_name=user_name)
     if password is None:
         try:
-            password = prompt_pass(msg='Password: ', confirm=True)
+            password = prompt_pass(msg='Deployment user password: ', confirm=True)
         except NoTTYException:
             raise CLIError('Please specify both username and password in non-interactive mode.')
 
@@ -2275,7 +2275,8 @@ def get_history_triggered_webjob(cmd, resource_group_name, name, webjob_name, sl
 
 
 def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable=too-many-statements, too-many-branches
-              location=None, sku=None, dryrun=False, logs=False, launch_browser=False):
+              location=None, sku=None, dryrun=False, logs=False, launch_browser=False,
+              deployment_local_git=None, local_git_user_name=None):
     import os
     from azure.cli.core._profile import Profile
     client = web_client_factory(cmd.cli_ctx)
@@ -2288,6 +2289,8 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
     logger.info("UserPrefix to use '%s'", user)
     # if dir is empty, show a message in dry run
     do_deployment = False if os.listdir(src_dir) == [] else True
+    # if git deployment, disable deployment
+    do_deployment = False if deployment_local_git else do_deployment
     _create_new_rg = True
     _create_new_asp = True
     _create_new_app = True
@@ -2325,6 +2328,9 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
     loc_name = location.replace(" ", "").lower()
     is_linux = True if os_val == 'Linux' else False
 
+    if deployment_local_git and local_git_user_name:
+        set_deployment_user(cmd, local_git_user_name)
+
     if resource_group_name is None:
         logger.info('Using default ResourceGroup value')
         rg_name = "{}_rg_{}_{}".format(user, os_val, loc_name)
@@ -2347,6 +2353,7 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
             "name" : "%s",
             "appserviceplan" : "%s",
             "resourcegroup" : "%s",
+            "deployment_local_git" : "%s",
             "sku": "%s",
             "os": "%s",
             "location" : "%s",
@@ -2354,7 +2361,7 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
             "version_detected": "%s",
             "runtime_version": "%s"
             }
-            """ % (name, asp, rg_str, full_sku, os_val, location, src_path,
+            """ % (name, asp, rg_str, deployment_local_git, full_sku, os_val, location, src_path,
                    detected_version, runtime_version)
     create_json = json.loads(dry_run_str)
     if dryrun:
@@ -2409,7 +2416,10 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
     # create the app
     if _create_new_app:
         logger.warning("Creating app '%s' ...", name)
-        create_webapp(cmd, rg_name, name, asp, runtime_version if is_linux else None, tags={"cli": 'webapp_up'})
+        web_app = create_webapp(cmd, rg_name, name, asp, runtime_version if is_linux else None, 
+                                tags={"cli": 'webapp_up'}, deployment_local_git=deployment_local_git)\
+        if deployment_local_git:
+            create_json['deploymentLocalGitUrl'] = web_app.deploymentLocalGitUrl
         logger.warning("Webapp creation complete")
         create_json['name'] = name
         _set_build_app_setting = True
@@ -2490,7 +2500,6 @@ def webapp_up(cmd, name, resource_group_name=None, plan=None,  # pylint: disable
         _configure_default_logging(cmd, rg_name, name)
         return get_streaming_log(cmd, rg_name, name)
     return create_json
-
 
 def _ping_scm_site(cmd, resource_group, name):
     from azure.cli.core.util import should_disable_connection_verify
